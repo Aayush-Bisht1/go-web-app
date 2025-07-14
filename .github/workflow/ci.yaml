@@ -1,0 +1,97 @@
+name: 'CI Pipeline for the Deployment'
+
+
+on:
+  push:
+    branches:
+      - main
+    paths-ignore:
+      - 'helm/**'
+      - 'k8s/**'
+
+  pull_request:
+    branches: 
+      - main
+  
+
+jobs:
+  build:
+    runs-on: 'ubuntu-latest'
+    
+    steps:
+      - name: Clone the Repo
+        uses: actions/checkout@v4
+
+      - name: setup the go application
+        uses: actions/setup-go@v4
+        with:
+          go-version: 1.22
+      
+      - name: build 
+        run: go build -o go-web-app
+
+      - name: test
+        run: go test ./...
+
+  code_quaility:
+    runs-on: 'ubuntu-latest'
+    
+    needs: build
+    
+    steps:
+      - name: checkout repository
+        uses: actions/checkout@v4
+
+      - name: Run golangci-lint
+        uses: golangci/golangci-lint-action@v6
+        with:
+          version: latest
+
+  
+  push: 
+    runs-on: ubuntu-latest
+    needs:  code_quaility
+    steps:
+      - name: checkout the code
+        uses: actions/checkout@v4
+
+      - name: set up the docker buildx
+        uses: docker/setup-buildx-action@v1
+
+      - name: login to dockerhub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_PASSWORD }}
+
+      - name: build and push action
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ./Dockerfile 
+          push: true
+          tags: ${{ secrets.DOCKERHUB_USERNAME }}/go-web-app:${{github.run_id}}
+
+  update-newtag-in-helm-chart:
+    runs-on: ubuntu-latest
+
+    needs: push
+
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+      with:
+        token: ${{ secrets.TOKEN }}
+
+    - name: Update tag in Helm chart
+      run: |
+        sed -i 's/tag: .*/tag: "${{github.run_id}}"/' helm/go-web-app-chart/values.yaml
+
+    - name: Commit and push changes
+      run: |
+        git config --global user.email "aayushbisht205@gmail.com"
+        git config --global user.name "Aayush-Bisht1"
+        git add helm/go-web-app-chart/values.yaml
+        git commit -m "Update tag in Helm chart"
+        git push 
+           
